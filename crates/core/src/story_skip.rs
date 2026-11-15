@@ -293,25 +293,68 @@ const POUCH_ADD: &str = "PouchSystemActor.EventTriggerAddOrRemovePouchContent";
 /// The gift stays in its own scene file on purpose. A get-item call spliced into the bridge
 /// event (Goto_HyruleCastle) hung the game twice, even with its preload row edited. This scene
 /// already calls GetPouchContent:DisplayGetByActorName, so nothing new has to be loaded.
+///
+/// The window runs before the grant, as in the scene's own C01 cut. A progressive item placed
+/// here has both events wrapped into tier checks (crate::progressive::wrap_grant, before this
+/// patch runs), and both checks then see the pouch before the grant, so they pick the same tier.
 pub fn patch_gift(b: &mut Bf) -> Res<()> {
     let f: &mut Flow = flow_mut(b, GIFT_FLOW)?;
     let grant: usize = find(f, GIFT_GRANT)?;
     let show: usize = find(f, GIFT_SHOW)?;
-    if action(f, grant).as_deref() != Some(POUCH_ADD) {
+    let wrapped = |i: usize| matches!(f.events[i].kind, Kind::Switch { .. });
+    if !wrapped(grant) && action(f, grant).as_deref() != Some(POUCH_ADD) {
         return Err(Error::Format("story skip: the gift scene's grant is not a pouch add, the game files differ"));
     }
-    if !matches!(&f.events[show].kind, Kind::Sub { flow, entry, .. } if flow == "GetPouchContent" && entry == "DisplayGetByActorName") {
+    if !wrapped(show) && !matches!(&f.events[show].kind, Kind::Sub { flow, entry, .. } if flow == "GetPouchContent" && entry == "DisplayGetByActorName") {
         return Err(Error::Format("story skip: the gift scene's get window is not GetPouchContent:DisplayGetByActorName, the game files differ"));
     }
     let (g, s): (u16, u16) = (idx(grant)?, idx(show)?);
+    // C01 holds the window's sub calls (one, or one per tier once wrapped).
+    let subs: Vec<u16> = f.entries.iter().find(|e| e.name == "C01").map(|e| e.subs.clone()).ok_or(Error::Format("story skip: the gift scene has no C01 cut"))?;
     let e: &mut crate::bfevfl::Entry = f.entries.iter_mut().find(|e| e.name == GIFT_ENTRY).ok_or(Error::Format("story skip: the gift scene has no EntryPoint0"))?;
-    if e.main == g {
+    if e.main == s {
         return Err(Error::Format("story skip: the gift scene was already patched"));
     }
-    e.main = g;
-    e.subs = vec![s];
-    set_next(&mut f.events[grant].kind, s)?;
-    set_next(&mut f.events[show].kind, NONE)?;
+    e.main = s;
+    e.subs = subs;
+    let after: u16 = ends(f, show)?;
+    retarget(f, show, after, g)?;
+    retarget(f, grant, ends(f, grant)?, NONE)?;
+    Ok(())
+}
+
+/// The single `next` every path from `start` ends on: the event's own next, or, through a
+/// tier check, the shared next of its tier copies.
+fn ends(f: &Flow, start: usize) -> Res<u16> {
+    let mut seen: Vec<u16> = Vec::new();
+    let mut todo: Vec<usize> = vec![start];
+    while let Some(i) = todo.pop() {
+        match &f.events[i].kind {
+            Kind::Switch { cases, .. } => todo.extend(cases.iter().map(|c| c.ev as usize)),
+            k => {
+                let n: u16 = next_of(k).ok_or(Error::Format("story skip: a gift event has no single next"))?;
+                if !seen.contains(&n) {
+                    seen.push(n);
+                }
+            }
+        }
+    }
+    match seen.as_slice() {
+        [n] => Ok(*n),
+        _ => Err(Error::Msg(format!("story skip: the gift event {} does not end on one next ({seen:?})", f.events[start].name))),
+    }
+}
+
+/// Points every path from `start` that ends on `from` at `to` instead.
+fn retarget(f: &mut Flow, start: usize, from: u16, to: u16) -> Res<()> {
+    let mut todo: Vec<usize> = vec![start];
+    while let Some(i) = todo.pop() {
+        if let Kind::Switch { cases, .. } = &f.events[i].kind {
+            todo.extend(cases.iter().map(|c| c.ev as usize));
+        } else if next_of(&f.events[i].kind) == Some(from) {
+            set_next(&mut f.events[i].kind, to)?;
+        }
+    }
     Ok(())
 }
 
@@ -600,8 +643,20 @@ mod tests {
         let f: &Flow = b.flows.iter().find(|f| f.name == GIFT_FLOW).unwrap();
         let e = f.entries.iter().find(|e| e.name == GIFT_ENTRY).unwrap();
         let w: Vec<String> = walk(f, e.main, 5);
-        assert_eq!(w, vec!["PouchSystemActor.EventTriggerAddOrRemovePouchContent(Item_Ocarina_Fairy)".to_string(), "sub GetPouchContent:DisplayGetByActorName".to_string()]);
+        assert_eq!(w, vec!["sub GetPouchContent:DisplayGetByActorName".to_string(), "PouchSystemActor.EventTriggerAddOrRemovePouchContent(Item_Ocarina_Fairy)".to_string()]);
         assert_eq!(e.subs, vec![find(f, GIFT_SHOW).unwrap() as u16]);
+        // With a progressive item placed, both events are tier checks first; every window
+        // copy then leads to the grant check, and every grant copy ends the flow.
+        let mut b: Bf = Bf::parse(&rf.read_zs(GIFT_FILE).unwrap()).unwrap();
+        let fl: &mut Flow = flow_mut(&mut b, GIFT_FLOW).unwrap();
+        let (g, s): (usize, usize) = (find(fl, GIFT_GRANT).unwrap(), find(fl, GIFT_SHOW).unwrap());
+        crate::progressive::wrap_grant(fl, g, GIFT_GRANT, "Actor", "Ocarina").unwrap();
+        crate::progressive::wrap_grant(fl, s, GIFT_SHOW, "ActorName", "Ocarina").unwrap();
+        patch_gift(&mut b).unwrap();
+        let f: &Flow = b.flows.iter().find(|f| f.name == GIFT_FLOW).unwrap();
+        assert_eq!(f.entries.iter().find(|e| e.name == GIFT_ENTRY).unwrap().main as usize, s);
+        assert_eq!(ends(f, s).unwrap() as usize, g);
+        assert_eq!(ends(f, g).unwrap(), NONE);
         let out: Vec<u8> = b.write().unwrap();
         assert_eq!(Bf::parse(&out).unwrap(), b);
     }

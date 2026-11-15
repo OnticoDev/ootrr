@@ -15,9 +15,11 @@ pub fn linked(i: &Item, actor: &str) -> bool {
 }
 
 /// Saria's gift. Its vanilla Ocarina is progressive, which pins a location whose flow also
-/// shows a get window (the window names one tier). Saria can still hold any other item: the
-/// grant and the window both follow the placed item, `allows` keeps progressive items away, and
-/// the ocarina tutorial is turned off (crate::no_tutorials).
+/// shows a get window (the window names one tier). Saria can hold any item, progressive ones
+/// included: a placed progressive item wraps both the window and the grant into tier checks
+/// (flow_wrap::grants takes every edit of the location), and the window runs before the grant
+/// (crate::story_skip::patch_gift, and the scene's own C01 cut), so both name the same tier.
+/// The ocarina tutorial is turned off (crate::no_tutorials).
 pub const SARIA: &str = "LW Gift from Saria";
 
 pub fn ok(d: &Data, name: &str) -> bool {
@@ -56,6 +58,9 @@ pub fn allows(d: &Data, name: &str, i: &Item) -> bool {
         return true;
     };
     if family_of(&i.tiers).is_some() {
+        if name == SARIA {
+            return d.flow_accepts(i);
+        }
         return (grants_only(l) && l.cat != "scrub_sale" && d.flow_accepts(i)) || crate::scrubs_a::home(d, name, &i.name);
     }
     d.flow_accepts(i) || d.vanilla_of(name) == Some(i.name.as_str())
@@ -145,14 +150,11 @@ mod tests {
     }
 
     #[test]
-    fn saria_holds_any_item_but_a_progressive_one() {
+    fn saria_holds_any_item_progressive_ones_included() {
         let d: Data = Data::load().unwrap();
         assert!(d.flow_ok(SARIA));
-        for n in ["Ocarina", "Progressive Hookshot", "Bomb Bag", "Magic Meter"] {
-            assert!(!allows(&d, SARIA, item(&d, n)), "{n}");
-        }
-        for n in ["Boomerang", "Lens of Truth", "Rupees (5)"] {
-            assert!(allows(&d, SARIA, item(&d, n)) || d.item(n).is_none(), "{n}");
+        for n in ["Ocarina", "Progressive Hookshot", "Bomb Bag", "Magic Meter", "Boomerang"] {
+            assert!(allows(&d, SARIA, item(&d, n)), "{n}");
         }
         assert!(!d.flow_ok("HF Ocarina of Time Item"), "the Ocarina of Time scene stays pinned");
     }
