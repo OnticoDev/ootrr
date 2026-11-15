@@ -153,8 +153,13 @@ mod tests {
     fn saria_holds_any_item_progressive_ones_included() {
         let d: Data = Data::load().unwrap();
         assert!(d.flow_ok(SARIA));
-        for n in ["Ocarina", "Progressive Hookshot", "Bomb Bag", "Magic Meter", "Boomerang"] {
+        for n in ["Ocarina", "Progressive Wallet", "Progressive Scale", "Magic Meter", "Boomerang"] {
             assert!(allows(&d, SARIA, item(&d, n)), "{n}");
+        }
+        // Families with a tier no event hands out (flow_locations.json "accept") stay out of
+        // every flow location, Saria's included.
+        for n in ["Progressive Hookshot", "Progressive Strength Upgrade", "Bomb Bag"] {
+            assert!(!allows(&d, SARIA, item(&d, n)), "{n}");
         }
         assert!(!d.flow_ok("HF Ocarina of Time Item"), "the Ocarina of Time scene stays pinned");
     }
