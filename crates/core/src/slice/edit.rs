@@ -618,11 +618,13 @@ pub fn build_with(seed: &SeedFile, romfs: &P, load: &P, mod_name: &str, host: Ho
     }
     more.extend(crate::bomb_lift::stage(&mut rf)?);
     more.extend(crate::door_fix::stage(&mut rf)?);
+    more.push(crate::no_tutorials::stage(&mut rf)?);
     if p.door {
         more.extend(crate::door_open::stage(&mut rf)?);
     }
     let reward: Option<&str> = crate::start_reward::pick(&seed.seed, p.start).map(|(_, a)| a);
-    let flags: Vec<(String, bool)> = p.start_flags();
+    let mut flags: Vec<(String, bool)> = p.start_flags();
+    flags.extend(crate::no_tutorials::start_flags());
     let mut give: Vec<&str> = p.pouch.clone();
     if let Some(a) = reward {
         give.push(a);
