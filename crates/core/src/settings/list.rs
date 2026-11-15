@@ -478,7 +478,7 @@ pub fn build() -> Schema {
     );
     s.push(
         Setting::toggle(86, crate::story_skip::SETTING, "world", "Skip story cutscenes", false)
-            .tip("Saria's long bridge scene is cut and only the short gift scene plays, so the bridge check stays where it is. The Temple of Time's first entry and altar scenes as a child never play. The first Master Sword draw skips the sword pull, Ganondorf, Rauru and Sheik: the sword and the item of Rauru's check are given, the quest steps those scenes set are written, and the short scene of a later draw takes Link to the adult Temple of Time. Experimental, untested in the game."),
+            .tip("Saria's bridge scenes are cut: crossing the bridge gives the check's item with a plain item get window. The Temple of Time's first entry and altar scenes as a child never play. The first Master Sword draw skips the sword pull, Ganondorf, Rauru and Sheik: the sword and the item of Rauru's check are given, the quest steps those scenes set are written, and the short scene of a later draw takes Link to the adult Temple of Time. Experimental, untested in the game."),
     );
     s.push(
         Setting::toggle(73, "shuffle_treasure_reward", "shuffle", "Treasure Chest Game reward", false)

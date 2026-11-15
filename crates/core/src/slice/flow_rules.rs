@@ -14,6 +14,12 @@ pub fn linked(i: &Item, actor: &str) -> bool {
     i.actor.as_deref() == Some(actor) || i.tiers.iter().any(|t| t == actor) || i.world.iter().any(|w| w == actor)
 }
 
+/// Saria's gift. Its vanilla Ocarina is progressive, which pins a location whose flow also
+/// shows a get window (the window names one tier). Saria can still hold any other item: the
+/// grant and the window both follow the placed item, `allows` keeps progressive items away, and
+/// the ocarina tutorial is turned off (crate::no_tutorials).
+pub const SARIA: &str = "LW Gift from Saria";
+
 pub fn ok(d: &Data, name: &str) -> bool {
     let Some(l) = d.flow.by_name(name) else {
         return false;
@@ -34,6 +40,9 @@ pub fn ok(d: &Data, name: &str) -> bool {
         return false;
     };
     if family_of(&i.tiers).is_some() {
+        if name == SARIA {
+            return linked(i, actor) && d.flow_accepts(i);
+        }
         return (grants_only(l) || crate::scrubs_a::grants_only(l)) && linked(i, actor) && d.flow_accepts(i);
     }
     if tiered(l, actor) {
@@ -78,9 +87,8 @@ mod tests {
         "LH Adult Fishing",
     ];
 
-    const PINNED: [&str; 8] = [
+    const PINNED: [&str; 7] = [
         "GC Darunias Joy",
-        "LW Gift from Saria",
         "HF Ocarina of Time Item",
         "GC Rolling Goron as Child",
         "DMT Biggoron",
@@ -134,6 +142,19 @@ mod tests {
         assert!(!allows(&d, "Kak 50 Gold Skulltula Reward", item(&d, "Progressive Strength Upgrade")));
         assert!(!allows(&d, "Kak 50 Gold Skulltula Reward", item(&d, "Progressive Hookshot")));
         assert!(allows(&d, "Some Chest", item(&d, "Progressive Hookshot")));
+    }
+
+    #[test]
+    fn saria_holds_any_item_but_a_progressive_one() {
+        let d: Data = Data::load().unwrap();
+        assert!(d.flow_ok(SARIA));
+        for n in ["Ocarina", "Progressive Hookshot", "Bomb Bag", "Magic Meter"] {
+            assert!(!allows(&d, SARIA, item(&d, n)), "{n}");
+        }
+        for n in ["Boomerang", "Lens of Truth", "Rupees (5)"] {
+            assert!(allows(&d, SARIA, item(&d, n)) || d.item(n).is_none(), "{n}");
+        }
+        assert!(!d.flow_ok("HF Ocarina of Time Item"), "the Ocarina of Time scene stays pinned");
     }
 
     #[test]

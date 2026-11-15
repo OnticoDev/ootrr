@@ -267,7 +267,10 @@ pub fn generate_data(d: &Data, s: &Settings, seed: &str, o: &GenOpts) -> Res<Gen
             && !p.excluded.contains(&w.locs[*l].name)
             && !ok(i, *l)
             && !d.item(&w.items.names[i]).is_some_and(|x| crate::slice::dungeon_items::exempt(&p, &x.kind))
+            && w.locs[*l].name != crate::slice::flow_rules::SARIA
         {
+            // Saria's vanilla Ocarina is progressive and her get window names one tier, so the
+            // Ocarina goes to the pool and she holds something else (flow_rules::SARIA).
             return Err(E::Msg(format!(
                 "the vanilla item {} of {} is not allowed there under these settings",
                 w.items.names[i], w.locs[*l].name

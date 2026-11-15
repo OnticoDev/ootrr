@@ -6,6 +6,7 @@
 //! - Saria's gift (setting): the bridge event goes straight to Dm_Kokiri_0155, the short gift
 //!   scene that hands over the check's item, the way it does when the long Dm_Kokiri_0150 scene
 //!   is skipped with the button. 0150 is marked as played there, which retires the trigger.
+//!   0155 itself is cut down to its grant and get window, a plain item get.
 //! - Temple of Time as a child (setting): the first entry and the altar scenes are marked as
 //!   played at new game, with the flags the altar scene leaves behind.
 //! - First Master Sword draw (setting): the draw gives the sword and the item of Rauru's check,
@@ -30,7 +31,7 @@ use crate::start_state::Ops;
 pub const SETTING: &str = "skip_story_scenes";
 
 pub const NOTE_DEKU: &str = "The Deku Tree is met at new game: its mouth is open, the Deku Tree quest is complete and the Forest Stone quest is where Link's first arrival inside the tree leaves it, so the meeting, the arrival scene and Navi's dungeon lesson are skipped.";
-pub const NOTE: &str = "Story cutscenes are skipped. Saria's long bridge scene is cut and only the short gift scene plays, so the bridge check stays where it is. The Temple of Time's first entry and altar scenes are marked as played. The first Master Sword draw gives the sword and the item of Rauru's check and then plays the short scene of a later draw, without the sword pull, Ganondorf, Rauru or Sheik scenes.";
+pub const NOTE: &str = "Story cutscenes are skipped. Saria's bridge scenes are cut: crossing the bridge gives the check's item with a plain item get window. The Temple of Time's first entry and altar scenes are marked as played. The first Master Sword draw gives the sword and the item of Rauru's check and then plays the short scene of a later draw, without the sword pull, Ganondorf, Rauru or Sheik scenes.";
 
 const TRUE: u32 = 0x8000_0001;
 const FALSE: u32 = 0;
@@ -277,6 +278,43 @@ pub fn patch_bridge(b: &mut Bf) -> Res<()> {
     Ok(())
 }
 
+/// The short gift scene. Its C01 cut shows the get window (Event77) and then, inside a fork,
+/// adds the item (Event68); the location patcher points both at the check's item.
+pub const GIFT_FILE: &str = "Event/EventFlow/Dm_Kokiri_0155.bfevfl.zs";
+pub const GIFT_FLOW: &str = "Dm_Kokiri_0155";
+pub const GIFT_ENTRY: &str = "EntryPoint0";
+const GIFT_GRANT: &str = "Event68";
+const GIFT_SHOW: &str = "Event77";
+const POUCH_ADD: &str = "PouchSystemActor.EventTriggerAddOrRemovePouchContent";
+
+/// Turns the gift scene into a plain item get: the entry point runs the grant, then the get
+/// window, then ends, with no cuts, camera or animation.
+///
+/// The gift stays in its own scene file on purpose. A get-item call spliced into the bridge
+/// event (Goto_HyruleCastle) hung the game twice, even with its preload row edited. This scene
+/// already calls GetPouchContent:DisplayGetByActorName, so nothing new has to be loaded.
+pub fn patch_gift(b: &mut Bf) -> Res<()> {
+    let f: &mut Flow = flow_mut(b, GIFT_FLOW)?;
+    let grant: usize = find(f, GIFT_GRANT)?;
+    let show: usize = find(f, GIFT_SHOW)?;
+    if action(f, grant).as_deref() != Some(POUCH_ADD) {
+        return Err(Error::Format("story skip: the gift scene's grant is not a pouch add, the game files differ"));
+    }
+    if !matches!(&f.events[show].kind, Kind::Sub { flow, entry, .. } if flow == "GetPouchContent" && entry == "DisplayGetByActorName") {
+        return Err(Error::Format("story skip: the gift scene's get window is not GetPouchContent:DisplayGetByActorName, the game files differ"));
+    }
+    let (g, s): (u16, u16) = (idx(grant)?, idx(show)?);
+    let e: &mut crate::bfevfl::Entry = f.entries.iter_mut().find(|e| e.name == GIFT_ENTRY).ok_or(Error::Format("story skip: the gift scene has no EntryPoint0"))?;
+    if e.main == g {
+        return Err(Error::Format("story skip: the gift scene was already patched"));
+    }
+    e.main = g;
+    e.subs = vec![s];
+    set_next(&mut f.events[grant].kind, s)?;
+    set_next(&mut f.events[show].kind, NONE)?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------- first Master Sword draw
 
 pub const DOOR_FILE: &str = "Event/EventFlow/DoorOfTime.bfevfl.zs";
@@ -421,6 +459,7 @@ pub fn stage(rf: &mut Romfs, have: Have) -> Res<Vec<Out>> {
     let got: Option<&str> = l.by_hash(crate::flags::hash_name(&got) as u64).is_some().then_some(got.as_str());
     Ok(vec![
         edit_zs(rf, have, BRIDGE_FILE, |raw| rebuild(raw, patch_bridge))?,
+        edit_zs(rf, have, GIFT_FILE, |raw| rebuild(raw, patch_gift))?,
         edit_zs(rf, have, DOOR_FILE, |raw| rebuild(raw, |b| patch_draw(b, &medal, got)))?,
     ])
 }
@@ -547,5 +586,23 @@ mod tests {
         assert_eq!(w[4], "GameDataActor.EventTriggerSetGameDataBool(HyruleField_ChangeENV)");
         assert!(w[5].contains("EventReserveBancChange"));
         Bf::parse(&b.write().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn the_real_gift_scene_is_a_plain_item_get() {
+        let Some(root) = dump() else {
+            return;
+        };
+        let mut rf: Romfs = Romfs::open(&root).unwrap();
+        let mut b: Bf = Bf::parse(&rf.read_zs(GIFT_FILE).unwrap()).unwrap();
+        patch_gift(&mut b).unwrap();
+        assert!(patch_gift(&mut b).is_err());
+        let f: &Flow = b.flows.iter().find(|f| f.name == GIFT_FLOW).unwrap();
+        let e = f.entries.iter().find(|e| e.name == GIFT_ENTRY).unwrap();
+        let w: Vec<String> = walk(f, e.main, 5);
+        assert_eq!(w, vec!["PouchSystemActor.EventTriggerAddOrRemovePouchContent(Item_Ocarina_Fairy)".to_string(), "sub GetPouchContent:DisplayGetByActorName".to_string()]);
+        assert_eq!(e.subs, vec![find(f, GIFT_SHOW).unwrap() as u16]);
+        let out: Vec<u8> = b.write().unwrap();
+        assert_eq!(Bf::parse(&out).unwrap(), b);
     }
 }
