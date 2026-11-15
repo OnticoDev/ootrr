@@ -20,7 +20,17 @@ pub fn linked(i: &Item, actor: &str) -> bool {
 /// (flow_wrap::grants takes every edit of the location), and the window runs before the grant
 /// (crate::story_skip::patch_gift, and the scene's own C01 cut), so both name the same tier.
 /// The ocarina tutorial is turned off (crate::no_tutorials).
+///
+/// Saria also skips the flow_locations.json `accept` list, which only names actors that some
+/// vanilla event hands out. Her gift uses the generic pouch add and
+/// GetPouchContent:DisplayGetByActorName, which treasure chests use for every item, so any
+/// pouch item fits (the Hookshot, the Gauntlets, the bags, the Bow and the Slingshot included).
 pub const SARIA: &str = "LW Gift from Saria";
+
+/// An item Saria can hand out: one whose every form is a pouch item.
+pub fn saria_takes(d: &Data, i: &Item) -> bool {
+    d.flow_accepts(i) || (crate::flow_extra::pouch(i) && i.tiers.iter().all(|t| t.starts_with("Item_") || t.starts_with("Weapon_")))
+}
 
 pub fn ok(d: &Data, name: &str) -> bool {
     let Some(l) = d.flow.by_name(name) else {
@@ -43,7 +53,7 @@ pub fn ok(d: &Data, name: &str) -> bool {
     };
     if family_of(&i.tiers).is_some() {
         if name == SARIA {
-            return linked(i, actor) && d.flow_accepts(i);
+            return linked(i, actor) && saria_takes(d, i);
         }
         return (grants_only(l) || crate::scrubs_a::grants_only(l)) && linked(i, actor) && d.flow_accepts(i);
     }
@@ -57,10 +67,10 @@ pub fn allows(d: &Data, name: &str, i: &Item) -> bool {
     let Some(l) = d.flow.by_name(name) else {
         return true;
     };
+    if name == SARIA {
+        return saria_takes(d, i) || d.vanilla_of(name) == Some(i.name.as_str());
+    }
     if family_of(&i.tiers).is_some() {
-        if name == SARIA {
-            return d.flow_accepts(i);
-        }
         return (grants_only(l) && l.cat != "scrub_sale" && d.flow_accepts(i)) || crate::scrubs_a::home(d, name, &i.name);
     }
     d.flow_accepts(i) || d.vanilla_of(name) == Some(i.name.as_str())
@@ -153,14 +163,11 @@ mod tests {
     fn saria_holds_any_item_progressive_ones_included() {
         let d: Data = Data::load().unwrap();
         assert!(d.flow_ok(SARIA));
-        for n in ["Ocarina", "Progressive Wallet", "Progressive Scale", "Magic Meter", "Boomerang"] {
+        for n in ["Ocarina", "Progressive Wallet", "Progressive Scale", "Magic Meter", "Boomerang", "Progressive Hookshot", "Progressive Strength Upgrade", "Bomb Bag", "Bow", "Slingshot"] {
             assert!(allows(&d, SARIA, item(&d, n)), "{n}");
         }
-        // Families with a tier no event hands out (flow_locations.json "accept") stay out of
-        // every flow location, Saria's included.
-        for n in ["Progressive Hookshot", "Progressive Strength Upgrade", "Bomb Bag"] {
-            assert!(!allows(&d, SARIA, item(&d, n)), "{n}");
-        }
+        // Other flow locations keep the accept list.
+        assert!(!allows(&d, "Kak 50 Gold Skulltula Reward", item(&d, "Progressive Hookshot")));
         assert!(!d.flow_ok("HF Ocarina of Time Item"), "the Ocarina of Time scene stays pinned");
     }
 

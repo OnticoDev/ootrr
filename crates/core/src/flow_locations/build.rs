@@ -100,7 +100,10 @@ pub fn plan(d: &Data, cs: &[Choice], o: &Opts) -> Res<(Vec<Change>, usize, Vec<S
         }
         seen.push(&c.location);
         let l: &Loc = pick(d, c, o)?;
-        if !d.usable(&c.item) {
+        // Saria's gift hands out any pouch item through the generic pouch add and get window
+        // (crate::slice::flow_rules::SARIA), so it skips the accept list.
+        let saria: bool = l.name == crate::slice::flow_rules::SARIA;
+        if !d.usable(&c.item) && !(saria && plausible(&c.item)) {
             if !(o.untested && plausible(&c.item)) {
                 return Err(E::Msg(format!(
                     "{} is not a name the game's own event flows hand out, so {} refuses it. Pass the untested option to try it anyway",
