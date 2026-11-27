@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -15,6 +16,9 @@ from .tables import GAME, LOCATION_NAME_TO_ID, bundle
 ITEM_FLAGS = ("HavePlayedGetEvent.", "IsGet_SmallKey_GerudoFortress.")
 
 ITEMS_HANDLING = 0b101
+PROTOCOL = 1
+HELLO_WAIT = 15.0
+SET_EXE = "Set ootrr_options.ootrr_exe in host.yaml to ootrr.exe from the OOTRR desktop app, not the emulator, then restart this client. The web version of OOTRR cannot link to the game."
 PENDING = "OOTRR.AP.Pending"
 POLL = 1.0
 RETRY = 8.0
@@ -94,25 +98,86 @@ class Bridge:
         self.exe = exe
         self.p: Optional[subprocess.Popen] = None
         self.n = 0
+        self.bad: Optional[str] = None
 
     def _start(self) -> None:
         flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         cmd = [sys.executable, self.exe, "ap-bridge"] if self.exe.endswith(".py") else [self.exe, "ap-bridge"]
-        self.p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", bufsize=1, creationflags=flags)
+        try:
+            self.p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", bufsize=1, creationflags=flags)
+        except OSError as e:
+            self.p = None
+            self.bad = f"Could not run {self.exe} ({e}). {SET_EXE}"
+            logger.error(f"OOTRR: {self.bad}")
+            return
+        r = self._ask({"op": "hello"}, HELLO_WAIT)
+        if r.get("protocol") != PROTOCOL:
+            self._stop()
+            self.bad = f"{self.exe} did not answer as the OOTRR app. {SET_EXE}"
+            logger.error(f"OOTRR: {self.bad}")
+
+    def _stop(self) -> None:
+        p, self.p = self.p, None
+        if p is None:
+            return
+        try:
+            if p.poll() is None:
+                p.kill()
+            p.wait(timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        for s in (p.stdin, p.stdout):
+            try:
+                if s is not None:
+                    s.close()
+            except (OSError, ValueError):
+                pass
+
+    def _ask(self, req: Dict[str, Any], wait: Optional[float]) -> Dict[str, Any]:
+        p = self.p
+        assert p is not None and p.stdin is not None and p.stdout is not None
+        self.n += 1
+        try:
+            p.stdin.write(json.dumps(dict(req, id=self.n)) + "\n")
+            p.stdin.flush()
+        except OSError:
+            self._stop()
+            return {"ok": False, "error": "the OOTRR bridge stopped"}
+        got_line: List[str] = []
+
+        def read() -> None:
+            try:
+                got_line.append(p.stdout.readline())
+            except (OSError, ValueError):
+                got_line.append("")
+
+        if wait is None:
+            read()
+        else:
+            t = threading.Thread(target=read, daemon=True)
+            t.start()
+            t.join(wait)
+        line = got_line[0] if got_line else ""
+        if not line:
+            self._stop()
+            return {"ok": False, "error": "the OOTRR bridge stopped"}
+        try:
+            r = json.loads(line)
+        except ValueError:
+            r = None
+        if not isinstance(r, dict):
+            self._stop()
+            return {"ok": False, "error": "the OOTRR bridge sent an answer that is not JSON"}
+        return r
 
     def call(self, req: Dict[str, Any]) -> Dict[str, Any]:
+        if self.bad:
+            return {"ok": False, "error": self.bad}
         if self.p is None or self.p.poll() is not None:
             self._start()
-        assert self.p is not None and self.p.stdin is not None and self.p.stdout is not None
-        self.n += 1
-        req = dict(req, id=self.n)
-        self.p.stdin.write(json.dumps(req) + "\n")
-        self.p.stdin.flush()
-        line = self.p.stdout.readline()
-        if not line:
-            self.p = None
-            return {"ok": False, "error": "the OOTRR bridge stopped"}
-        return json.loads(line)
+            if self.p is None:
+                return {"ok": False, "error": self.bad or "the OOTRR bridge stopped"}
+        return self._ask(req, None)
 
     def close(self) -> None:
         if self.p is not None:
@@ -120,8 +185,8 @@ class Bridge:
                 self.p.stdin.close()
                 self.p.wait(timeout=2)
             except Exception:
-                self.p.kill()
-            self.p = None
+                pass
+        self._stop()
 
 
 class OOTRRCommands(ClientCommandProcessor):
