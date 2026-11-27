@@ -237,7 +237,9 @@ fn pool(d: &Data, seed: &SeedFile) -> Vec<String> {
             out.push(i.name.clone());
         }
     }
-    out.extend(keys::looks(d));
+    if is("shuffle_smallkeys", "keysanity") {
+        out.extend(keys::looks(d));
+    }
     out.retain(|n| d.item(n).is_some_and(|i| i.actor.is_some()));
     out
 }
