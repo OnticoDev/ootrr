@@ -90,6 +90,7 @@ pub fn unpack(d: &Data, sound: bool) -> Unpack {
     files.extend(crate::gerudo_card::MEMBERS.iter().map(|n| crate::gerudo_card::schedule_path(n)));
     files.extend(crate::open_world::fortress::CARPENTERS.iter().map(|n| crate::open_world::fortress::own_schedule(n)));
     files.insert(crate::gerudo_card::schedule_path(crate::open_world::rolling_goron::OWN));
+    files.extend(crate::open_world::kokiri::NPCS.iter().chain([&crate::open_world::kokiri::MIDO]).map(|n| crate::open_world::kokiri::schedule_path(n)));
     // Read only with some settings (no heart drops, harp colours, enemy effects, adult trade
     // shuffle), so missing them from a .nup or .nx unpack only shows up in those seeds.
     files.insert(crate::difficulty::lottery::FILE.to_string());
